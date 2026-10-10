@@ -80,14 +80,22 @@ class Evidence:
         return bool(inserted),row
 
     def finish(self,record_id,output,status='completed'):
-        raw=json.dumps(output,ensure_ascii=False,default=str)
-        raw=self.redact(raw)
-        with self.connect() as con:
-            con.execute('UPDATE commands SET status=?,output=?,updated=? WHERE id=?',
-                (status,raw,time.time(),record_id))
+            raw=json.dumps(output,ensure_ascii=False,default=str)
+            raw=self.redact(raw)
+            # Respect structured failure when the caller asks for completed.
+            if status=='completed':
+                check=output
+                if isinstance(output,str):
+                    try: check=json.loads(output)
+                    except (ValueError,TypeError): pass
+                if isinstance(check,dict) and (check.get('success') is False or check.get('error')):
+                    status='failed'
+            with self.connect() as con:
+                con.execute('UPDATE commands SET status=?,output=?,updated=? WHERE id=?',
+                    (status,raw,time.time(),record_id))
 
     def redact(self,raw):
-        for path in (Path.home()/'.config/orca/api-key',ROOT/'data/owner-key',Path(os.getenv('HARNESS_PENTAGI_PASSWORD_FILE', str(Path.home()/'security/pentagi-password')))):
+        for path in (Path.home()/'.config/orca/api-key',ROOT/'data/owner-key',Path(os.getenv('HARNESS_DATA_DIR', str(ROOT/'data')))/'owner-key'):
             if path.exists():
                 secret=path.read_text().strip()
                 if secret: raw=raw.replace(secret,'[private credential]')
@@ -144,7 +152,7 @@ class Evidence:
                     elif item.get('type')=='function_call_output' and item.get('call_id') in calls:
                         args=calls[item['call_id']]
                         if not args.get('command'): continue
-                        cwd=str((artifact.parent/args.get('working_directory','.')).resolve())
+                        cwd=str((artifact.parent/(args.get('working_directory') or '.')).resolve())
                         if self.find(artifact.parent.parent.name,args['command'],'vm',cwd): continue
                         execute,row=self.reserve(artifact.parent.parent.name,args['command'],'vm',cwd)
                         if execute:
