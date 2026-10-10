@@ -1,0 +1,10 @@
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash ca-certificates curl wget git jq ripgrep nmap dnsutils \
+    netcat-openbsd openssl python3 python3-venv python3-pip pipx sqlmap \
+    perl libnet-ssleay-perl libio-socket-ssl-perl libxml-writer-perl \
+    && rm -rf /var/lib/apt/lists/*
+COPY nikto /opt/nikto
+RUN ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto \
+    && chmod +x /opt/nikto/program/nikto.pl
+WORKDIR /work

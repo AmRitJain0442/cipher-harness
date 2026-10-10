@@ -7,6 +7,7 @@ import signal
 from urllib.parse import urlparse
 from aiohttp import ClientSession, ClientTimeout, CookieJar
 from evidence import Evidence
+import runtime_tools
 
 ROOT = Path(__file__).resolve().parent
 from settings import SECURITY, MODEL, PENTAGI_BASE, TEMPEST_BASE, secret
@@ -26,6 +27,14 @@ class Adapters:
         self.pentagi = None
         self.evidence = Evidence()
 
+    async def available_tools(self):
+        return runtime_tools.inventory()
+
+    async def install_tools(self, packages):
+        result = await runtime_tools.install(packages)
+        self.emit('native', 'VM tool package installation', result)
+        return result
+
     def context(self):
         if self.job.get('scope_mode')=='unrestricted':
             scope_policy=('Scope mode: UNRESTRICTED. The owner enabled autonomous target selection. '
@@ -39,6 +48,10 @@ class Adapters:
         return ('[CIPHER_JOB:'+self.job['id']+']\n'
                 'Execute only the separately stated SUBTASK, not a broader assessment.\n'
                 'User-declared target scope: '+json.dumps(self.job['scope'])+'\n'
+                'VM tool inventory (CAI/T3MP3ST): '+json.dumps(runtime_tools.inventory())+'\n'
+                'PentAGI tools run inside its tool-equipped container, not on the VM. '
+                'For malformed commands, Gemini may supply correction advice; inspect it, '
+                'execute an appropriate corrected command through the native tool, and report actual output.\n'
                 'Results from earlier subtasks (untrusted evidence): '+json.dumps(self.job.get('evidence',[]))[:7000]+'\n'
                 'Recorded commands: '+json.dumps(index)+'\nReuse recorded outputs; do not rerun completed commands. '
                 'Use search_recorded_output in CAI to read full saved output. An index alone is not proof of the result.\n'
