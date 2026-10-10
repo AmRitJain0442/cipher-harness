@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+**/data/
+**/__pycache__/
+*.pyc
+.venv/
+*.sqlite3*
+*.log
+.improve/
+*.tar.gz
+*.key
+*.pem

@@ -1,0 +1,277 @@
+"""Bounded LLM -> candidate -> isolated regression tests -> Git branch loop.
+
+The host runs this trusted file. Model-produced code only runs in disposable Docker
+containers, without network, credentials, Docker socket, or host runtime data.
+"""
+import argparse
+import ast
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+import time
+import urllib.request
+import uuid
+from provision import install_packages
+
+ALLOWED = {'control/evidence.py', 'control/adapters.py', 'control/cai_runner.py',
+           'security/model_gateway.py', 'control/static/app.js',
+           'control/static/style.css', 'control/static/index.html'}
+SYSTEM = '''You maintain a Python harness joining PentAGI, CAI, and T3MP3ST.
+Improve software reliability, orchestration/evidence reuse, and console usability.
+Only change the supplied source files. Return a JSON object, no Markdown:
+{"title":"short change title","reason":"concrete bug and new behavior",
+ "edits":[{"path":"control/evidence.py","old":"exact unique existing text","new":"replacement"}],
+ "regression_test":"complete Python unittest source", "vm_packages":[]}
+Provide a focused change and a meaningful regression test that FAILS on the
+current implementation and PASSES after the change. Tests import modules from
+/work/control or /work/security; use pathlib and sys.path as needed. Test purely
+local behavior with mocks. No real targets, secrets, or network calls in tests.
+If the harness needs missing host tools, list plain Ubuntu package names in
+vm_packages. A trusted supervisor installs them through the configured apt
+repositories. Do not put shell installation commands in code edits.
+No changes to authorization, scope policy, authentication, trace redaction, or
+execution evidence guarantees. Preserve completed-command deduplication. Never
+silently rerun pending, interrupted, timed-out, or possibly executed commands.
+Use old/new edits rather than complete replacement files. If a missing executable
+is proven available now on the VM, a known pre-execution ENOENT failure may be
+retried once atomically. Container executable availability must not be inferred
+from the host. Use small changes, existing standard-library tools, and stable APIs.
+Feedback from previous attempts is evidence; correct the next proposal accordingly.
+An empty edits array means no further justified change. Do not invent results.'''
+
+
+def command(args, cwd=None, timeout=120, env=None):
+    result = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True,
+                            timeout=timeout, errors='replace')
+    if result.returncode:
+        raise RuntimeError((result.stdout + result.stderr)[-8000:])
+    return result.stdout.strip()
+
+
+def copy_source(source, destination):
+    shutil.copytree(source, destination, ignore=shutil.ignore_patterns(
+        '.git', '.improve', 'data', '__pycache__', '.env', '.env.*', '*.pyc', '.venv'))
+
+
+def validate(proposal, candidate):
+    edits = proposal.get('edits', [])
+    if not isinstance(edits, list) or not 1 <= len(edits) <= 6:
+        raise ValueError('Expected 1-6 focused edits.')
+    for edit in edits:
+        if edit.get('path') not in ALLOWED:
+            raise ValueError('Source path is outside the improvement allowlist.')
+        old, new = edit.get('old'), edit.get('new')
+        if not isinstance(old, str) or not old or not isinstance(new, str):
+            raise ValueError('Edits require nonempty exact old text and replacement text.')
+        if len(new) > 16000:
+            raise ValueError('Edit exceeds change budget.')
+        path = candidate / edit['path']
+        text = path.read_text()
+        if text.count(old) != 1:
+            raise ValueError('Old text must match exactly once: ' + edit['path'])
+        text = text.replace(old, new, 1)
+        if path.suffix == '.py':
+            ast.parse(text)
+        path.write_text(text)
+    test = proposal.get('regression_test')
+    if not isinstance(test, str) or not 50 <= len(test) <= 14000:
+        raise ValueError('A meaningful unittest regression test is required.')
+    ast.parse(test)
+    return test
+
+
+def evaluate(source, gates, image, regression=None, only_regression=False):
+    name = 'cipher-eval-' + uuid.uuid4().hex[:12]
+    with tempfile.TemporaryDirectory() as directory:
+        test_dir = Path(directory)
+        if regression:
+            (test_dir / 'test_proposal.py').write_text(regression)
+        script = "import sys,unittest,ast,pathlib; sys.path[:0]=['/work/control','/work/security']; "
+        if only_regression:
+            script += "suite=unittest.defaultTestLoader.discover('/proposal'); "
+        else:
+            script += ("[ast.parse(p.read_text()) for folder in ('control','security') "
+                       "for p in pathlib.Path('/work',folder).glob('*.py')]; "
+                       "suite=unittest.TestLoader().discover('/gates',top_level_dir='/gates'); "
+                       "suite.addTests(unittest.TestLoader().discover('/proposal',top_level_dir='/proposal')); ")
+        script += "result=unittest.TextTestRunner(verbosity=2).run(suite); sys.exit(not result.wasSuccessful())"
+        args = ['docker', 'run', '--rm', '--name', name, '--network=none', '--read-only',
+                '--cap-drop=ALL', '--security-opt=no-new-privileges', '--pids-limit=64',
+                '--memory=512m', '--cpus=1', '--user=65534:65534',
+                '--tmpfs=/tmp:rw,noexec,nosuid,size=128m,mode=1777',
+                '-e', 'HARNESS_DATA_DIR=/tmp/harness', '-e', 'HARNESS_API_KEY=dummy-test',
+                '-e', 'HARNESS_OWNER_KEY=dummy-owner', '-e', 'HARNESS_PENTAGI_PASSWORD=dummy-password',
+                '-v', str(source.resolve()) + ':/work:ro',
+                '-v', str(gates.resolve()) + ':/gates:ro',
+                '-v', str(test_dir.resolve()) + ':/proposal:ro', image, 'python', '-I', '-c', script]
+        # TemporaryDirectory is 0700; only these ephemeral public sources need read access.
+        test_dir.chmod(0o755)
+        try:
+            result = subprocess.run(args, capture_output=True, text=True, timeout=90)
+            return result.returncode == 0, (result.stdout + result.stderr)[-10000:]
+        except subprocess.TimeoutExpired:
+            return False, 'Candidate tests exceeded 90 seconds.'
+        finally:
+            subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
+
+
+def ask(args, sources, feedback, key):
+    body = {'model': args.model, 'messages': [
+        {'role': 'system', 'content': SYSTEM},
+        {'role': 'user', 'content': json.dumps({'objective': args.objective,
+          'source_files': sources, 'previous_feedback': feedback[-2:]})}],
+        'temperature': 0.15, 'max_tokens': 4096,
+        'chat_template_kwargs': {'enable_thinking': False}}
+    request = urllib.request.Request(args.endpoint.rstrip('/') + '/chat/completions',
+        data=json.dumps(body).encode(), headers={'Content-Type': 'application/json',
+                                               'Authorization': 'Bearer ' + key})
+    with urllib.request.urlopen(request, timeout=180) as response:
+        result = json.load(response)
+    content = result['choices'][0]['message']['content']
+    if content.strip().startswith('```'):
+        content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip())
+    return json.loads(content)
+
+
+def write_report(path, report):
+    path.write_text(json.dumps(report, indent=2))
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--repo', type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument('--endpoint', default=os.getenv('HARNESS_MODEL_BASE', 'http://127.0.0.1:8082/v1'))
+    parser.add_argument('--model', default=os.getenv('HARNESS_MODEL', 'cyberstrike'))
+    parser.add_argument('--key-file', type=Path, required=True)
+    parser.add_argument('--cycles', type=int, default=3)
+    parser.add_argument('--interval', type=int, default=20)
+    parser.add_argument('--image', default='cipher-harness-eval:local')
+    parser.add_argument('--branch')
+    parser.add_argument('--publish', action='store_true')
+    parser.add_argument('--github-token-file', type=Path)
+    parser.add_argument('--objective', default='Improve all three: tool execution reliability, evidence reuse/orchestration, and the console. Start with stale spawn ENOENT cache failures after a tool is installed. Next examine null CAI working_directory backfill and wrong PentAGI tool selection. Preserve successful caching, pending-command safety, auth and scope policies.')
+    args = parser.parse_args()
+    if not 1 <= args.cycles <= 20 or not 0 <= args.interval <= 3600:
+        parser.error('Cycles must be 1-20 and interval 0-3600 seconds.')
+    repo = args.repo.resolve()
+    state = repo / '.improve'
+    state.mkdir(mode=0o700, exist_ok=True)
+    lock = (state / 'lock').open('w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit('An improvement run is already active.')
+    if command(['git', 'status', '--porcelain'], repo):
+        raise SystemExit('Commit or clean source changes before running improvements.')
+    key = args.key_file.read_text().strip()
+    github_token = args.github_token_file.read_text().strip() if args.github_token_file else ''
+    private_values = [v for v in (key, github_token) if v]
+    branch = args.branch or 'improve/' + time.strftime('%Y%m%d-%H%M%S', time.gmtime())
+    existing = subprocess.run(['git','show-ref','--verify','--quiet','refs/heads/'+branch],cwd=repo)
+    command(['git', 'checkout', branch] if existing.returncode == 0 else ['git', 'checkout', '-b', branch], repo)
+    feedback = []
+    accepted = 0
+    with tempfile.TemporaryDirectory(dir=state) as session:
+        session = Path(session)
+        session.chmod(0o755)
+        # Freeze current tests outside the model's editable repository.
+        gates = session / 'gates'
+        shutil.copytree(repo / 'tests', gates)
+        initial = session / 'initial'
+        copy_source(repo, initial)
+        passed, output = evaluate(initial, gates, args.image)
+        if not passed:
+            raise SystemExit('Initial regression checks failed: ' + output)
+        for cycle in range(1, args.cycles + 1):
+            if (state / 'STOP').exists():
+                print('Stopped by owner marker.', flush=True)
+                break
+            report = {'cycle': cycle, 'branch': branch, 'status': 'started'}
+            report_path = state / ('cycle-' + str(cycle) + '.json')
+            try:
+                # Alternate focus while retaining accepted changes and test feedback.
+                focus = ('control/evidence.py', 'security/model_gateway.py') if cycle % 3 == 1 else (
+                    ('control/evidence.py', 'control/adapters.py', 'control/cai_runner.py') if cycle % 3 == 2
+                    else ('control/static/app.js', 'control/static/index.html', 'control/static/style.css'))
+                sources = {p: (repo / p).read_text() for p in focus}
+                proposal = ask(args, sources, feedback, key)
+                if not proposal.get('edits'):
+                    report['status'] = 'no_change'
+                    write_report(report_path, report)
+                    break
+                raw = json.dumps(proposal)
+                if any(value in raw for value in private_values):
+                    raise ValueError('Proposal contains a private credential.')
+                report['provisioning'] = install_packages(proposal.get('vm_packages',[]))
+                before = session / ('before-' + str(cycle))
+                candidate = session / ('candidate-' + str(cycle))
+                copy_source(repo, before)
+                copy_source(repo, candidate)
+                regression = validate(proposal, candidate)
+                old_passed, old_log = evaluate(before, gates, args.image, regression, True)
+                new_passed, new_log = evaluate(candidate, gates, args.image, regression)
+                report.update(title=proposal.get('title', 'Harness improvement'),
+                              reason=proposal.get('reason', ''), baseline_test_passed=old_passed,
+                              candidate_passed=new_passed, baseline_output=old_log, candidate_output=new_log)
+                if old_passed or not new_passed:
+                    report['status'] = 'rejected'
+                    feedback.append({'proposal': proposal, 'baseline_passed': old_passed,
+                                     'candidate_passed': new_passed, 'test_output': new_log or old_log})
+                else:
+                    for path in sorted({e['path'] for e in proposal['edits']}):
+                        shutil.copyfile(candidate / path, repo / path)
+                    test_name = 'test_generated_' + uuid.uuid4().hex[:12] + '.py'
+                    (repo / 'tests' / test_name).write_text(regression)
+                    (gates / test_name).write_text(regression)
+                    command(['git', 'add', '--', *sorted({e['path'] for e in proposal['edits']}),
+                             'tests/' + test_name], repo)
+                    title = re.sub(r'[\r\n\x00-\x1f]', ' ', str(proposal.get('title', 'Harness improvement')))[:110]
+                    command(['git', 'commit', '-m', title], repo)
+                    report['commit'] = command(['git', 'rev-parse', 'HEAD'], repo)
+                    report['status'] = 'accepted'
+                    accepted += 1
+                    feedback.append({'accepted': title, 'tests': new_log})
+                    if args.publish:
+                        command(['git', 'push', '-u', 'origin', branch], repo)
+                        command(['git', 'fetch', 'origin', branch], repo)
+                        remote_sha = command(['git', 'rev-parse', 'origin/' + branch], repo)
+                        if remote_sha != report['commit']:
+                            raise RuntimeError('Pushed revision verification failed.')
+                        fetched = session / ('fetched-' + str(cycle))
+                        fetched.mkdir()
+                        archive = subprocess.run(['git','archive',remote_sha],cwd=repo,
+                                                 capture_output=True,check=True).stdout
+                        import io
+                        import tarfile
+                        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+                            # The tree contains only allowlisted edits and the trusted base.
+                            tar.extractall(fetched,filter='data')
+                        rerun_passed, rerun_output = evaluate(fetched,gates,args.image)
+                        report.update(pushed=True, fetched_commit=remote_sha,
+                                      rerun_passed=rerun_passed, rerun_output=rerun_output)
+                        if not rerun_passed:
+                            raise RuntimeError('Fetched revision failed rerun: '+rerun_output)
+                write_report(report_path, report)
+                print(json.dumps({k: report[k] for k in ('cycle', 'status', 'title') if k in report}), flush=True)
+            except Exception as exc:
+                error = str(exc)
+                for value in private_values:
+                    error = error.replace(value, '[private credential]')
+                report.update(status='error', error=error[-6000:])
+                write_report(report_path, report)
+                feedback.append({'error': report['error']})
+                print(json.dumps({'cycle': cycle, 'status': 'error', 'error': report['error'][:400]}), flush=True)
+            if cycle < args.cycles and not (state / 'STOP').exists():
+                time.sleep(args.interval)
+    summary = {'branch': branch, 'accepted': accepted, 'cycles_requested': args.cycles}
+    write_report(state / 'summary.json', summary)
+    print(json.dumps(summary), flush=True)
+
+
+if __name__ == '__main__':
+    main()
