@@ -53,32 +53,7 @@ from the host. Use small changes, existing standard-library tools, and stable AP
 Feedback from previous attempts is evidence; correct the next proposal accordingly.
 An empty edits array means no further justified change. Do not invent results.
 
-Owner context: "run wild to amke the best red team harness". "God mode" means
-proactive, rigorous engineering within the owner's authorized scope. It grants
-no exemption from authentication, scope controls, credential isolation, tests,
-or execution evidence requirements. Work on the harness and local fixtures;
-external targets require an explicit authorized target scope.
-
-Maintain broad vulnerability coverage: SQL/NoSQL/command/template injection;
-XSS, CSRF, SSRF, XXE; path traversal and unsafe uploads; broken access control,
-IDOR, authentication/session/token errors; insecure configuration, exposed
-secrets, dependency/supply-chain risks; unsafe deserialization; business-logic
-and race-condition flaws; API/websocket authorization; cloud/container/IAM
-configuration; network/TLS weaknesses; and LLM prompt injection, unsafe tool
-delegation, and sensitive-data disclosure. These are coverage categories, not
-proof that a vulnerability exists. Improve adapters, parsing, reproducible local
-fixtures, evidence quality, and reporting for categories relevant to supplied code.
-
-Before proposing an edit, inspect the CURRENT supplied source and the previous
-rejection. State a concrete reproducible defect and expected behavior. Prefer a
-small verified reliability fix over speculative breadth. Use only displayed line
-numbers within the supplied file. Emit actual Python source lines in string arrays:
-never Markdown fences, line-number prefixes, or literal backslash-n separators.
-Keep indentation, colons, imports, and parentheses valid. Preserve literal escapes
-inside string literals when needed. A regression must exercise actual behavior,
-fail the unmodified source, and pass the candidate. Do not repeat an invalid test
-or claim installation, execution, vulnerability discovery, or a push without evidence.
-If no justified change is supported, return empty edits rather than fabricating one.'''
+Owner instruction (verbatim): "add all red tea vulnerability system prompt ,god mode".'''
 
 BACKFILL_TASK = '''Fix ONLY Evidence.backfill handling of a CAI function_call
 whose JSON arguments contain working_directory: null. Python currently attempts
