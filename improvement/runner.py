@@ -18,7 +18,7 @@ import urllib.request
 import uuid
 from provision import install_packages
 
-ALLOWED = {'control/evidence.py', 'control/adapters.py', 'control/cai_runner.py',
+ALLOWED = {'control/app.py', 'control/evidence.py', 'control/adapters.py', 'control/cai_runner.py',
            'security/model_gateway.py', 'control/static/app.js',
            'control/static/style.css', 'control/static/index.html'}
 SYSTEM = '''You maintain a Python harness joining PentAGI, CAI, and T3MP3ST.
@@ -240,7 +240,7 @@ def main():
             try:
                 # Alternate focus while retaining accepted changes and test feedback.
                 focus = ('control/evidence.py', 'security/model_gateway.py') if cycle % 3 == 1 else (
-                    ('control/evidence.py', 'control/adapters.py', 'control/cai_runner.py') if cycle % 3 == 2
+                    ('control/app.py', 'control/evidence.py', 'control/adapters.py', 'control/cai_runner.py') if cycle % 3 == 2
                     else ('control/static/app.js', 'control/static/index.html', 'control/static/style.css'))
                 task = None
                 if "artifact.parent/args.get('working_directory','.')" in (repo/'control/evidence.py').read_text():
