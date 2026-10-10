@@ -18,6 +18,8 @@ import time
 import urllib.request
 import uuid
 from provision import install_packages
+from proposals import proposal_schema, normalize_proposal
+from diagnostics import PROBES
 
 ALLOWED = {'control/app.py', 'control/evidence.py', 'control/adapters.py', 'control/cai_runner.py',
            'security/model_gateway.py', 'control/static/app.js',
@@ -26,8 +28,12 @@ SYSTEM = '''You maintain a Python harness joining PentAGI, CAI, and T3MP3ST.
 Improve software reliability, orchestration/evidence reuse, and console usability.
 Only change the supplied source files. Return a JSON object, no Markdown:
 {"title":"short change title","reason":"concrete bug and new behavior",
- "edits":[{"path":"control/evidence.py","old":"exact unique existing text","new":"replacement"}],
- "regression_test":"complete Python unittest source", "vm_packages":[]}
+ "edits":[{"path":"control/evidence.py","start_line":12,"end_line":14,
+ "replacement_lines":["source line with exact indentation","next source line"]}],
+ "regression_test_lines":["import unittest","other lines with exact indentation"], "vm_packages":[]}
+Line numbers are 1-based and inclusive, referring to the numbered supplied file.
+Do not include the displayed line numbers in replacement text. To insert code,
+replace an existing line with that same line plus your additional lines.
 Provide a focused change and a meaningful regression test that FAILS on the
 current implementation and PASSES after the change. Tests import modules from
 /work/control or /work/security; use pathlib and sys.path as needed. Test purely
@@ -38,7 +44,7 @@ repositories. Do not put shell installation commands in code edits.
 No changes to authorization, scope policy, authentication, trace redaction, or
 execution evidence guarantees. Preserve completed-command deduplication. Never
 silently rerun pending, interrupted, timed-out, or possibly executed commands.
-Use old/new edits rather than complete replacement files. If a missing executable
+Use short line-range edits rather than complete replacement files. If a missing executable
 is proven available now on the VM, a known pre-execution ENOENT failure may be
 retried once atomically. Container executable availability must not be inferred
 from the host. Use small changes, existing standard-library tools, and stable APIs.
@@ -100,7 +106,7 @@ def validate(proposal, candidate, supplied_paths=None):
         old, new = edit.get('old'), edit.get('new')
         if not isinstance(old, str) or not old or not isinstance(new, str):
             raise ValueError('Edits require nonempty exact old text and replacement text.')
-        if len(new) > 16000:
+        if len(new) > 64000:
             raise ValueError('Edit exceeds change budget.')
         path = candidate / edit['path']
         text = path.read_text()
@@ -171,9 +177,10 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
 def ask(args, sources, feedback, key, task=None):
     messages = [{'role':'system','content':SYSTEM},
         {'role':'user','content':'Current accepted source (these files pass their checks):\n'+
-         '\n\n'.join('FILE '+path+'\n```\n'+source+'\n```' for path,source in sources.items())},
+         '\n\n'.join('FILE '+path+'\n'+ '\n'.join(f'{number:04d} {line}' for number,line in enumerate(source.splitlines(),1)) for path,source in sources.items())},
         {'role':'user','content':'Active task:\n'+(task or args.objective)}]
-    relevant=feedback and any(e.get('path') in sources for e in feedback[-1].get('proposal',{}).get('edits',[]))
+    relevant=feedback and (task is None or feedback[-1].get('task')==task) and any(
+        e.get('path') in sources for e in feedback[-1].get('proposal',{}).get('edits',[]))
     if relevant and not feedback[-1].get('accepted'):
         previous=feedback[-1]
         messages.append({'role':'user','content':
@@ -185,12 +192,13 @@ def ask(args, sources, feedback, key, task=None):
     messages.append({'role':'user','content':
         'Make exactly one minimal behavior fix for the active task. Write a regression that calls the '
         'actual changed function. Use unittest and a with tempfile.TemporaryDirectory() block inside '
-        'the test. Preserve existing behavior for other inputs. Copy old text verbatim from the source. '
+        'the test. Preserve existing behavior for other inputs. Use exact numbered line ranges and keep indentation. '
         'No edits to omitted files. If you cannot demonstrate a real bug, return edits: []. '
         'Return JSON only.\n'+(task or '')})
     body = {'model': args.model, 'messages': [
         *messages],
         'temperature': 0.25, 'max_tokens': 4096,
+        'response_format':{'type':'json_object','schema':proposal_schema(sources)},
         'chat_template_kwargs': {'enable_thinking': False}}
     request = urllib.request.Request(args.endpoint.rstrip('/') + '/chat/completions',
         data=json.dumps(body).encode(), headers={'Content-Type': 'application/json',
@@ -200,7 +208,9 @@ def ask(args, sources, feedback, key, task=None):
     content = result['choices'][0]['message']['content']
     if content.strip().startswith('```'):
         content = re.sub(r'^```(?:json)?\s*|\s*```$', '', content.strip())
-    return json.loads(content)
+    if result['choices'][0].get('finish_reason')=='length':
+        raise ValueError('Model response reached its token limit; propose a smaller edit and shorter test.')
+    return normalize_proposal(json.loads(content),sources)
 
 
 def write_report(path, report):
@@ -265,9 +275,13 @@ def main():
                     ('control/app.py', 'control/evidence.py', 'control/adapters.py', 'control/cai_runner.py') if cycle % 3 == 2
                     else ('control/static/app.js', 'control/static/index.html', 'control/static/style.css'))
                 task = None
-                if "artifact.parent/args.get('working_directory','.')" in (repo/'control/evidence.py').read_text():
-                    focus = ('control/evidence.py',)
-                    task = BACKFILL_TASK
+                for probe in PROBES:
+                    probe_passed,probe_output=evaluate(initial,gates,args.image,probe['test'],True)
+                    if not probe_passed:
+                        focus=(probe['path'],)
+                        task=args.objective+'\nConcrete verified bug to fix now:\n'+probe['task']+'\nReproducer:\n'+probe['test']
+                        report['diagnostic']={'id':probe['id'],'before_output':probe_output}
+                        break
                 sources = {p: (repo / p).read_text() for p in focus}
                 proposal = ask(args, sources, feedback, key, task)
                 report['proposal'] = proposal
@@ -292,7 +306,7 @@ def main():
                               candidate_passed=new_passed, baseline_output=old_log, candidate_output=new_log)
                 if old_passed or not new_passed:
                     report['status'] = 'rejected'
-                    feedback.append({'proposal': proposal, 'baseline_passed': old_passed,
+                    feedback.append({'proposal': proposal, 'task':task, 'baseline_passed': old_passed,
                                      'candidate_passed': new_passed, 'test_output': new_log or old_log})
                 else:
                     for path in sorted({e['path'] for e in proposal['edits']}):
@@ -306,6 +320,9 @@ def main():
                              'tests/' + test_name], repo)
                     title = re.sub(r'[\r\n\x00-\x1f]', ' ', str(proposal.get('title', 'Harness improvement')))[:110]
                     command(['git', 'commit', '-m', title], repo)
+                    # Subsequent diagnostics must inspect the newly accepted version.
+                    shutil.rmtree(initial)
+                    copy_source(repo,initial)
                     report['commit'] = command(['git', 'rev-parse', 'HEAD'], repo)
                     report['status'] = 'accepted'
                     accepted += 1
@@ -340,7 +357,7 @@ def main():
                     error = error.replace(value, '[private credential]')
                 report.update(status='error', error=error[-6000:])
                 write_report(report_path, report)
-                feedback.append({'error': report['error'],'proposal':report.get('proposal',{})})
+                feedback.append({'error': report['error'],'task':task,'proposal':report.get('proposal',{})})
                 write_report(history_path, feedback[-4:])
                 print(json.dumps({'cycle': cycle, 'status': 'error', 'error': report['error'][:400]}), flush=True)
             if cycle < args.cycles and not (state / 'STOP').exists():
