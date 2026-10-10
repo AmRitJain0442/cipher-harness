@@ -295,6 +295,7 @@ def main():
                             raise RuntimeError('Pushed revision verification failed.')
                         fetched = session / ('fetched-' + str(cycle))
                         fetched.mkdir()
+                        fetched.chmod(0o755)
                         archive = subprocess.run(['git','archive',remote_sha],cwd=repo,
                                                  capture_output=True,check=True).stdout
                         import io
