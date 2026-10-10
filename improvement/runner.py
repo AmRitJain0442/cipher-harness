@@ -174,7 +174,8 @@ def main():
     branch = args.branch or 'improve/' + time.strftime('%Y%m%d-%H%M%S', time.gmtime())
     existing = subprocess.run(['git','show-ref','--verify','--quiet','refs/heads/'+branch],cwd=repo)
     command(['git', 'checkout', branch] if existing.returncode == 0 else ['git', 'checkout', '-b', branch], repo)
-    feedback = []
+    history_path = state / 'history.json'
+    feedback = json.loads(history_path.read_text())[-4:] if history_path.exists() else []
     accepted = 0
     with tempfile.TemporaryDirectory(dir=state) as session:
         session = Path(session)
@@ -257,6 +258,7 @@ def main():
                         if not rerun_passed:
                             raise RuntimeError('Fetched revision failed rerun: '+rerun_output)
                 write_report(report_path, report)
+                write_report(history_path, feedback[-4:])
                 print(json.dumps({k: report[k] for k in ('cycle', 'status', 'title') if k in report}), flush=True)
             except Exception as exc:
                 error = str(exc)
@@ -265,6 +267,7 @@ def main():
                 report.update(status='error', error=error[-6000:])
                 write_report(report_path, report)
                 feedback.append({'error': report['error']})
+                write_report(history_path, feedback[-4:])
                 print(json.dumps({'cycle': cycle, 'status': 'error', 'error': report['error'][:400]}), flush=True)
             if cycle < args.cycles and not (state / 'STOP').exists():
                 time.sleep(args.interval)
