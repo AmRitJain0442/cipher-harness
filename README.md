@@ -60,7 +60,8 @@ name comes from `HARNESS_MODEL`.
 `improvement/runner.py` uses the hosted LLM as a code-maintenance brain:
 
 1. Read the current accepted source and recent test feedback.
-2. Request a focused JSON change and a regression test.
+2. Request schema-constrained JSON line edits and a regression test. Source line
+   numbers refer to the current accepted snapshot; the model does not recreate old code.
 3. Apply the change to a separate candidate copy.
 4. Run the new test against the old code and the full protected suite against the candidate.
 5. Accept only when the new test fails before the change and all tests pass afterward.
@@ -68,7 +69,9 @@ name comes from `HARNESS_MODEL`.
    revision from GitHub, rerun the console and regression tests, and repeat.
 
 The focus rotates through tool execution, orchestration/evidence reuse, and the
-interface. Model code runs inside a disposable Docker container with no network,
+interface. Verified diagnostic failures take priority until their probes pass.
+Failed proposals receive feedback for that same task; unrelated stale errors are
+excluded. Model code runs inside a disposable Docker container with no network,
 no credentials, no host runtime data, and CPU/memory/time limits. The supervisor,
 test gates, publication workflow, and credentials stay outside its editable paths.
 Test success is evidence of the checked behavior; it does not establish general
