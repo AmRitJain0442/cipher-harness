@@ -80,11 +80,19 @@ class Evidence:
         return bool(inserted),row
 
     def finish(self,record_id,output,status='completed'):
-        raw=json.dumps(output,ensure_ascii=False,default=str)
-        raw=self.redact(raw)
-        with self.connect() as con:
-            con.execute('UPDATE commands SET status=?,output=?,updated=? WHERE id=?',
-                (status,raw,time.time(),record_id))
+            raw=json.dumps(output,ensure_ascii=False,default=str)
+            raw=self.redact(raw)
+            # Respect structured failure when the caller asks for completed.
+            if status=='completed':
+                check=output
+                if isinstance(output,str):
+                    try: check=json.loads(output)
+                    except (ValueError,TypeError): pass
+                if isinstance(check,dict) and (check.get('success') is False or check.get('error')):
+                    status='failed'
+            with self.connect() as con:
+                con.execute('UPDATE commands SET status=?,output=?,updated=? WHERE id=?',
+                    (status,raw,time.time(),record_id))
 
     def redact(self,raw):
         for path in (Path.home()/'.config/orca/api-key',ROOT/'data/owner-key',Path(os.getenv('HARNESS_PENTAGI_PASSWORD_FILE', str(Path.home()/'security/pentagi-password')))):
