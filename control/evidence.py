@@ -95,7 +95,7 @@ class Evidence:
                     (status,raw,time.time(),record_id))
 
     def redact(self,raw):
-        for path in (Path.home()/'.config/orca/api-key',ROOT/'data/owner-key',Path(os.getenv('HARNESS_PENTAGI_PASSWORD_FILE', str(Path.home()/'security/pentagi-password')))):
+        for path in (Path.home()/'.config/orca/api-key',ROOT/'data/owner-key',Path(os.getenv('HARNESS_DATA_DIR', str(ROOT/'data')))/'owner-key'):
             if path.exists():
                 secret=path.read_text().strip()
                 if secret: raw=raw.replace(secret,'[private credential]')
