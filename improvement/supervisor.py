@@ -21,8 +21,13 @@ def main():
         args.extend(['--github-token-file',os.environ['IMPROVE_GITHUB_TOKEN_FILE']])
     if os.getenv('IMPROVE_OBJECTIVE'):
         args.extend(['--objective',os.environ['IMPROVE_OBJECTIVE']])
+    mode = os.getenv('IMPROVE_MODE', 'prompt')
+    if mode == 'prompt':
+        args = [sys.executable, str(Path(__file__).with_name('prompt_loop.py'))]
+    elif mode != 'code':
+        raise ValueError('IMPROVE_MODE must be prompt or code.')
     while not (repo/'.improve/STOP').exists():
-        print('Starting recursive improvement batch.',flush=True)
+        print('Starting recursive improvement execution: '+mode,flush=True)
         result = subprocess.run(args)
         print(json.dumps({'batch_exit_code':result.returncode,'next_batch_seconds':interval,
                           'next_batch_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(time.time()+interval))}),flush=True)
