@@ -91,6 +91,7 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
         test_dir = Path(directory)
         if regression:
             (test_dir / 'test_proposal.py').write_text(regression)
+            (test_dir / 'test_proposal.py').chmod(0o644)
         script = "import sys,unittest,ast,pathlib; sys.path[:0]=['/work/control','/work/security']; "
         if only_regression:
             script += "suite=unittest.defaultTestLoader.discover('/proposal'); "
@@ -105,6 +106,7 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
                 '--memory=512m', '--cpus=1', '--user=65534:65534',
                 '--tmpfs=/tmp:rw,noexec,nosuid,size=128m,mode=1777',
                 '-e', 'HARNESS_DATA_DIR=/tmp/harness', '-e', 'HARNESS_API_KEY=dummy-test',
+                '-e', 'HOME=/tmp',
                 '-e', 'HARNESS_OWNER_KEY=dummy-owner', '-e', 'HARNESS_PENTAGI_PASSWORD=dummy-password',
                 '-v', str(source.resolve()) + ':/work:ro',
                 '-v', str(gates.resolve()) + ':/gates:ro',
@@ -229,6 +231,8 @@ def main():
                     test_name = 'test_generated_' + uuid.uuid4().hex[:12] + '.py'
                     (repo / 'tests' / test_name).write_text(regression)
                     (gates / test_name).write_text(regression)
+                    (repo / 'tests' / test_name).chmod(0o644)
+                    (gates / test_name).chmod(0o644)
                     command(['git', 'add', '--', *sorted({e['path'] for e in proposal['edits']}),
                              'tests/' + test_name], repo)
                     title = re.sub(r'[\r\n\x00-\x1f]', ' ', str(proposal.get('title', 'Harness improvement')))[:110]
