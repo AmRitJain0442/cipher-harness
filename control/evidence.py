@@ -144,7 +144,7 @@ class Evidence:
                     elif item.get('type')=='function_call_output' and item.get('call_id') in calls:
                         args=calls[item['call_id']]
                         if not args.get('command'): continue
-                        cwd=str((artifact.parent/args.get('working_directory','.')).resolve())
+                        cwd=str((artifact.parent/(args.get('working_directory') or '.')).resolve())
                         if self.find(artifact.parent.parent.name,args['command'],'vm',cwd): continue
                         execute,row=self.reserve(artifact.parent.parent.name,args['command'],'vm',cwd)
                         if execute:
