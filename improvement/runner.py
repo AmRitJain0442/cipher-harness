@@ -7,6 +7,7 @@ import argparse
 import ast
 import difflib
 import fcntl
+import io
 import json
 import os
 from pathlib import Path
@@ -14,6 +15,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tarfile
 import time
 import urllib.request
 import uuid
@@ -79,6 +81,19 @@ cwd=str((artifact.parent/args.get('working_directory','.')).resolve())
 Use that as old (without leading spaces); the source's existing indentation will
 remain before its replacement. Do not use old text from a previously rejected
 candidate: those changes were never applied to the accepted source.'''
+
+
+def extract_snapshot(archive, destination):
+    """Make the public Git snapshot readable by the isolated evaluator user."""
+    destination = Path(destination)
+    destination.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+        tar.extractall(destination, filter='data')
+    destination.chmod(0o755)
+    for path in destination.rglob('*'):
+        if path.is_symlink():
+            raise ValueError('Evaluation snapshots must not contain symlinks.')
+        path.chmod(0o755 if path.is_dir() else 0o644)
 
 
 def command(args, cwd=None, timeout=120, env=None):
@@ -334,15 +349,9 @@ def main():
                         if remote_sha != report['commit']:
                             raise RuntimeError('Pushed revision verification failed.')
                         fetched = session / ('fetched-' + str(cycle))
-                        fetched.mkdir()
-                        fetched.chmod(0o755)
                         archive = subprocess.run(['git','archive',remote_sha],cwd=repo,
                                                  capture_output=True,check=True).stdout
-                        import io
-                        import tarfile
-                        with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
-                            # The tree contains only allowlisted edits and the trusted base.
-                            tar.extractall(fetched,filter='data')
+                        extract_snapshot(archive, fetched)
                         rerun_passed, rerun_output = evaluate(fetched,gates,args.image)
                         report.update(pushed=True, fetched_commit=remote_sha,
                                       rerun_passed=rerun_passed, rerun_output=rerun_output)
