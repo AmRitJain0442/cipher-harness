@@ -268,6 +268,16 @@ async def coordinate(job_id,session):
                         stalled=stalled+1 if signature in stale_reads else 0
                         stale_reads.add(signature)
                         emit('lookup','Searched recorded evidence',args)
+                    elif name=='available_tools':
+                        observation=await adapter.available_tools()
+                        emit('lookup','Listed VM tool inventory',{})
+                    elif name=='install_tools':
+                        if job['budget']!=0 and job['steps']>=job['budget']:
+                            observation={'error':'Action budget reached. Installation was not executed.'}
+                        else:
+                            job['steps']+=1
+                            update(job_id,steps=job['steps'])
+                            observation=await adapter.install_tools(args['packages'])
                     elif name not in ('delegate_pentagi','delegate_cai','delegate_t3mp3st'):
                         raise ValueError('Unknown tool.')
                     elif job['budget']!=0 and job['steps']>=job['budget']:

@@ -12,8 +12,8 @@ cp -a /opt/nikto /tmp/cipher-tool-image/nikto
 docker build -t cipher-tools:local /tmp/cipher-tool-image
 ```
 
-Set PentAGI's `DOCKER_DEFAULT_IMAGE_FOR_PENTEST= cipher-tools:local` without the
-space after `=`. Existing containers retain their existing tool installations;
+Set PentAGI's `DOCKER_DEFAULT_IMAGE_FOR_PENTEST=cipher-tools:local`.
+Existing containers retain their existing tool installations;
 new worker containers use the configured image.
 
 The shared model gateway recognizes failed command tool results from PentAGI,

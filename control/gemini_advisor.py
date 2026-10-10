@@ -47,7 +47,7 @@ def failed_command(messages):
             for key in ('exit_code', 'exitCode', 'returncode')))
     failed = failed or bool(re.search(
         r'command not found|unrecognized (?:argument|option)|unknown option|invalid option|'
-        r'syntax error|no such file or directory|spawn .* ENOENT', text, re.I))
+        r'syntax error|no such file or directory|spawn .* ENOENT|\[exit code:\s*[1-9]', text, re.I))
     if not failed:
         return None
     tool, command, arguments = calls[latest['tool_call_id']]
