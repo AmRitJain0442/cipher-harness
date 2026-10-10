@@ -7,4 +7,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY nikto /opt/nikto
 RUN ln -s /opt/nikto/program/nikto.pl /usr/local/bin/nikto \
     && chmod +x /opt/nikto/program/nikto.pl
+COPY install_projectdiscovery.py /tmp/install_projectdiscovery.py
+RUN python3 /tmp/install_projectdiscovery.py && rm /tmp/install_projectdiscovery.py
 WORKDIR /work

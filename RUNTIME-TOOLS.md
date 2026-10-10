@@ -9,9 +9,15 @@ Build the PentAGI worker image with a copy of the installed Nikto source tree:
 ```bash
 mkdir -p /tmp/cipher-tool-image
 cp security/Dockerfile.tools /tmp/cipher-tool-image/Dockerfile
+cp security/install_projectdiscovery.py /tmp/cipher-tool-image/install_projectdiscovery.py
 cp -a /opt/nikto /tmp/cipher-tool-image/nikto
 docker build -t cipher-tools:local /tmp/cipher-tool-image
 ```
+
+The image includes ProjectDiscovery httpx and nuclei from checksum-verified official
+release archives. Install them on the VM with
+`sudo python3 security/install_projectdiscovery.py` as well. Use
+`nuclei -update-templates` to populate the current user's template cache.
 
 Set PentAGI's `DOCKER_DEFAULT_IMAGE_FOR_PENTEST=cipher-tools:local`.
 Existing containers retain their existing tool installations;
