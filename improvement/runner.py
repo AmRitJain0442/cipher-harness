@@ -63,7 +63,10 @@ unittest regression, using 'from evidence import Evidence'. Use a context manage
 for TemporaryDirectory INSIDE the test method. No cleanup call or other executable
 statement may be placed at module level. Keep .resolve() for both null and non-null
 paths; the simplest fix uses (args.get('working_directory') or '.') inside the
-existing path expression.'''
+existing path expression. The correct replacement statement is:
+cwd=str((artifact.parent/(args.get('working_directory') or '.')).resolve())
+Keep its existing indentation. Replace just that one statement, not a two-line
+conditional that omits .resolve() when working_directory is non-null.'''
 
 
 def command(args, cwd=None, timeout=120, env=None):
@@ -151,13 +154,13 @@ def ask(args, sources, feedback, key, task=None):
         previous=feedback[-1]
         messages.append({'role':'user','content':
             'The previous attempt failed. Repair it rather than repeating it.\n'+
-            json.dumps({'last_proposal':previous.get('proposal'),
+            json.dumps({'previous_regression_test':previous.get('proposal',{}).get('regression_test'),
                         'test_failure':previous.get('test_output',previous.get('error',''))[-3500:]})+
             '\nReturn the complete corrected JSON proposal. Fix test errors too.'})
     messages.append({'role':'user','content':
         'Make exactly one minimal behavior fix for the active task. Write a regression that calls the '
         'actual changed function. Use unittest and a with tempfile.TemporaryDirectory() block inside '
-        'the test. Preserve existing behavior for other inputs. Return JSON only.'})
+        'the test. Preserve existing behavior for other inputs. Return JSON only.\n'+(task or '')})
     body = {'model': args.model, 'messages': [
         *messages],
         'temperature': 0.25, 'max_tokens': 4096,
