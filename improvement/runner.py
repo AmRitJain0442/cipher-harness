@@ -44,6 +44,23 @@ from the host. Use small changes, existing standard-library tools, and stable AP
 Feedback from previous attempts is evidence; correct the next proposal accordingly.
 An empty edits array means no further justified change. Do not invent results.'''
 
+BACKFILL_TASK = '''Fix ONLY Evidence.backfill handling of a CAI function_call
+whose JSON arguments contain working_directory: null. Python currently attempts
+artifact.parent / None, catches TypeError, and silently loses the tool observation.
+The default directory for null or missing working_directory must be the artifact's
+parent directory, resolved to an absolute path, matching normal runner behavior.
+Write an actual behavior regression: use tempfile.TemporaryDirectory; create
+runs/job-a/cai-test/result.json containing a conversation with a function_call
+with call_id='call-a', arguments=json.dumps({'command':'echo hello',
+'working_directory':None}), and a function_call_output with the same call_id and
+output='hello'. Create Evidence(tmp/'evidence.sqlite3'), call backfill(tmp), and
+assert search('job-a') returns exactly one completed record whose cwd equals
+str(artifact.parent.resolve()). This fails before the fix and passes afterward.
+Do not merely test fingerprint; invoke backfill and check the imported record.
+Keep the edit minimal, preserving non-null working_directory behavior. Do not
+change gateway behavior in this proposal. Return the required JSON and a complete
+unittest regression, using 'from evidence import Evidence'.'''
+
 
 def command(args, cwd=None, timeout=120, env=None):
     result = subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True,
@@ -92,7 +109,7 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
         if regression:
             (test_dir / 'test_proposal.py').write_text(regression)
             (test_dir / 'test_proposal.py').chmod(0o644)
-        script = "import sys,unittest,ast,pathlib; sys.path[:0]=['/work/control','/work/security']; "
+        script = "import sys,unittest,ast,pathlib; sys.path[:0]=['/work','/work/control','/work/security']; "
         if only_regression:
             script += "suite=unittest.defaultTestLoader.discover('/proposal'); "
         else:
@@ -122,10 +139,10 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
             subprocess.run(['docker', 'rm', '-f', name], capture_output=True)
 
 
-def ask(args, sources, feedback, key):
+def ask(args, sources, feedback, key, task=None):
     body = {'model': args.model, 'messages': [
         {'role': 'system', 'content': SYSTEM},
-        {'role': 'user', 'content': json.dumps({'objective': args.objective,
+        {'role': 'user', 'content': json.dumps({'objective': task or args.objective,
           'source_files': sources, 'previous_feedback': feedback[-2:]})}],
         'temperature': 0.15, 'max_tokens': 4096,
         'chat_template_kwargs': {'enable_thinking': False}}
@@ -201,8 +218,12 @@ def main():
                 focus = ('control/evidence.py', 'security/model_gateway.py') if cycle % 3 == 1 else (
                     ('control/evidence.py', 'control/adapters.py', 'control/cai_runner.py') if cycle % 3 == 2
                     else ('control/static/app.js', 'control/static/index.html', 'control/static/style.css'))
+                task = None
+                if "artifact.parent/args.get('working_directory','.')" in (repo/'control/evidence.py').read_text():
+                    focus = ('control/evidence.py',)
+                    task = BACKFILL_TASK
                 sources = {p: (repo / p).read_text() for p in focus}
-                proposal = ask(args, sources, feedback, key)
+                proposal = ask(args, sources, feedback, key, task)
                 if not proposal.get('edits'):
                     report['status'] = 'no_change'
                     write_report(report_path, report)
