@@ -52,3 +52,13 @@ class AdvisorTests(unittest.IsolatedAsyncioTestCase):
         for name in ('--allow-unauthenticated', 'curl;whoami', '$(id)', '../package'):
             with self.assertRaises(ValueError):
                 await install([name])
+
+    async def test_container_install_updates_only_owned_tool_workers(self):
+        docker=AsyncMock(side_effect=['abc123 pentagi-terminal-18\ndef456 unrelated-service\n',
+                                      'cipher-tools:local','image built','updated','installed'])
+        with patch('runtime_tools.docker_command',docker):
+            result=await install(['jq'],environment='pentagi')
+        self.assertEqual(result['updated_workers'],['abc123'])
+        invocations=docker.await_args_list
+        self.assertEqual(invocations[3].args,('exec','abc123','apt-get','update'))
+        self.assertNotIn('def456',str(invocations))

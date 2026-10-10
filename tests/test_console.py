@@ -84,7 +84,7 @@ class ConsoleTests(unittest.IsolatedAsyncioTestCase):
                 patch.object(self.module,'fit_history',AsyncMock()):
             await self.module.coordinate(job_id,session)
         adapter.available_tools.assert_awaited_once()
-        adapter.install_tools.assert_awaited_once_with(['jq'])
+        adapter.install_tools.assert_awaited_once_with(packages=['jq'])
         job=self.module.get_job(job_id)
         self.assertEqual(job['status'],'completed')
         observations=[json.loads(message['content']) for message in job['history'] if message['role']=='tool']

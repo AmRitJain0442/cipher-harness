@@ -30,8 +30,8 @@ class Adapters:
     async def available_tools(self):
         return runtime_tools.inventory()
 
-    async def install_tools(self, packages):
-        result = await runtime_tools.install(packages)
+    async def install_tools(self, packages, environment='vm'):
+        result = await runtime_tools.install(packages, environment)
         self.emit('native', 'VM tool package installation', result)
         return result
 
