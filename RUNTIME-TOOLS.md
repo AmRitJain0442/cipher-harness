@@ -1,7 +1,8 @@
 Cypher's runtime agents can execute commands through CAI on the VM, T3MP3ST's
 native command API, and PentAGI's isolated worker containers. `available_tools`
-lists VM executables; `install_tools` installs explicitly requested Ubuntu
-packages using apt. Container tools require their own image.
+lists VM executables; `install_tools` installs explicitly requested packages
+using apt. Use `environment=vm` for CAI/T3MP3ST, or `environment=pentagi` to update
+the worker image and existing workers using that image.
 
 Build the PentAGI worker image with a copy of the installed Nikto source tree:
 
