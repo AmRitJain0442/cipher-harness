@@ -5,6 +5,7 @@ containers, without network, credentials, Docker socket, or host runtime data.
 """
 import argparse
 import ast
+import difflib
 import fcntl
 import json
 import os
@@ -87,13 +88,15 @@ def copy_source(source, destination):
         '.git', '.improve', 'data', '__pycache__', '.env', '.env.*', '*.pyc', '.venv'))
 
 
-def validate(proposal, candidate):
+def validate(proposal, candidate, supplied_paths=None):
     edits = proposal.get('edits', [])
     if not isinstance(edits, list) or not 1 <= len(edits) <= 6:
         raise ValueError('Expected 1-6 focused edits.')
     for edit in edits:
         if edit.get('path') not in ALLOWED:
             raise ValueError('Source path is outside the improvement allowlist.')
+        if supplied_paths is not None and edit['path'] not in supplied_paths:
+            raise ValueError('This cycle did not supply '+edit['path']+'. Edit only: '+', '.join(sorted(supplied_paths)))
         old, new = edit.get('old'), edit.get('new')
         if not isinstance(old, str) or not old or not isinstance(new, str):
             raise ValueError('Edits require nonempty exact old text and replacement text.')
@@ -102,15 +105,29 @@ def validate(proposal, candidate):
         path = candidate / edit['path']
         text = path.read_text()
         if text.count(old) != 1:
-            raise ValueError('Old text must match exactly once: ' + edit['path'])
+            lines=text.splitlines()
+            needle=old.splitlines()[0].strip()
+            nearest=difflib.get_close_matches(needle,[line.strip() for line in lines if line.strip()],n=3,cutoff=0.2)
+            raise ValueError('Old text does not match accepted source in '+edit['path']+
+                             '. No change was applied. Closest actual lines: '+repr(nearest)+
+                             '. Copy old text exactly from the supplied file; do not invent functions.')
         text = text.replace(old, new, 1)
         if path.suffix == '.py':
-            ast.parse(text)
+            try:
+                ast.parse(text)
+            except SyntaxError as exc:
+                raise ValueError('Proposed edit introduced a syntax error in '+edit['path']+
+                                 f' at line {exc.lineno}: {exc.msg}. Candidate line: '+
+                                 repr(exc.text)+'. The accepted source is valid and unchanged.') from exc
         path.write_text(text)
     test = proposal.get('regression_test')
     if not isinstance(test, str) or not 50 <= len(test) <= 14000:
         raise ValueError('A meaningful unittest regression test is required.')
-    ast.parse(test)
+    try:
+        ast.parse(test)
+    except SyntaxError as exc:
+        raise ValueError(f'Generated regression test has a syntax error at line {exc.lineno}: '+
+                         exc.msg+'. This is a test-generation error, not a bug in the accepted harness.') from exc
     return test
 
 
@@ -153,19 +170,24 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
 
 def ask(args, sources, feedback, key, task=None):
     messages = [{'role':'system','content':SYSTEM},
-        {'role':'user','content':'Current accepted source:\n'+json.dumps(sources)},
+        {'role':'user','content':'Current accepted source (these files pass their checks):\n'+
+         '\n\n'.join('FILE '+path+'\n```\n'+source+'\n```' for path,source in sources.items())},
         {'role':'user','content':'Active task:\n'+(task or args.objective)}]
-    if feedback and not feedback[-1].get('accepted'):
+    relevant=feedback and any(e.get('path') in sources for e in feedback[-1].get('proposal',{}).get('edits',[]))
+    if relevant and not feedback[-1].get('accepted'):
         previous=feedback[-1]
         messages.append({'role':'user','content':
             'The previous attempt failed. Repair it rather than repeating it.\n'+
             json.dumps({'previous_regression_test':previous.get('proposal',{}).get('regression_test'),
                         'test_failure':previous.get('test_output',previous.get('error',''))[-3500:]})+
-            '\nReturn the complete corrected JSON proposal. Fix test errors too.'})
+            '\nThese errors came from your candidate, not the accepted code. '
+            'Return a corrected proposal using only the supplied source. Fix test errors too.'})
     messages.append({'role':'user','content':
         'Make exactly one minimal behavior fix for the active task. Write a regression that calls the '
         'actual changed function. Use unittest and a with tempfile.TemporaryDirectory() block inside '
-        'the test. Preserve existing behavior for other inputs. Return JSON only.\n'+(task or '')})
+        'the test. Preserve existing behavior for other inputs. Copy old text verbatim from the source. '
+        'No edits to omitted files. If you cannot demonstrate a real bug, return edits: []. '
+        'Return JSON only.\n'+(task or '')})
     body = {'model': args.model, 'messages': [
         *messages],
         'temperature': 0.25, 'max_tokens': 4096,
@@ -252,16 +274,17 @@ def main():
                 if not proposal.get('edits'):
                     report['status'] = 'no_change'
                     write_report(report_path, report)
-                    break
+                    print(json.dumps({'cycle':cycle,'status':'no_change'}),flush=True)
+                    continue
                 raw = json.dumps(proposal)
                 if any(value in raw for value in private_values):
                     raise ValueError('Proposal contains a private credential.')
-                report['provisioning'] = install_packages(proposal.get('vm_packages',[]))
                 before = session / ('before-' + str(cycle))
                 candidate = session / ('candidate-' + str(cycle))
                 copy_source(repo, before)
                 copy_source(repo, candidate)
-                regression = validate(proposal, candidate)
+                regression = validate(proposal, candidate, set(sources))
+                report['provisioning'] = install_packages(proposal.get('vm_packages',[]))
                 old_passed, old_log = evaluate(before, gates, args.image, regression, True)
                 new_passed, new_log = evaluate(candidate, gates, args.image, regression)
                 report.update(title=proposal.get('title', 'Harness improvement'),
@@ -317,12 +340,15 @@ def main():
                     error = error.replace(value, '[private credential]')
                 report.update(status='error', error=error[-6000:])
                 write_report(report_path, report)
-                feedback.append({'error': report['error']})
+                feedback.append({'error': report['error'],'proposal':report.get('proposal',{})})
                 write_report(history_path, feedback[-4:])
                 print(json.dumps({'cycle': cycle, 'status': 'error', 'error': report['error'][:400]}), flush=True)
             if cycle < args.cycles and not (state / 'STOP').exists():
                 time.sleep(args.interval)
-    summary = {'branch': branch, 'accepted': accepted, 'cycles_requested': args.cycles}
+    summary = {'branch': branch, 'accepted': accepted, 'accepted_this_batch':accepted,
+               'head_commit':command(['git','rev-parse','HEAD'],repo),
+               'finished_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime()),
+               'cycles_requested': args.cycles}
     write_report(state / 'summary.json', summary)
     print(json.dumps(summary), flush=True)
 
