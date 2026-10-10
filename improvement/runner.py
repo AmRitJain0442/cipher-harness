@@ -59,7 +59,11 @@ str(artifact.parent.resolve()). This fails before the fix and passes afterward.
 Do not merely test fingerprint; invoke backfill and check the imported record.
 Keep the edit minimal, preserving non-null working_directory behavior. Do not
 change gateway behavior in this proposal. Return the required JSON and a complete
-unittest regression, using 'from evidence import Evidence'.'''
+unittest regression, using 'from evidence import Evidence'. Use a context manager
+for TemporaryDirectory INSIDE the test method. No cleanup call or other executable
+statement may be placed at module level. Keep .resolve() for both null and non-null
+paths; the simplest fix uses (args.get('working_directory') or '.') inside the
+existing path expression.'''
 
 
 def command(args, cwd=None, timeout=120, env=None):
@@ -140,11 +144,23 @@ def evaluate(source, gates, image, regression=None, only_regression=False):
 
 
 def ask(args, sources, feedback, key, task=None):
+    messages = [{'role':'system','content':SYSTEM},
+        {'role':'user','content':'Current accepted source:\n'+json.dumps(sources)},
+        {'role':'user','content':'Active task:\n'+(task or args.objective)}]
+    if feedback and not feedback[-1].get('accepted'):
+        previous=feedback[-1]
+        messages.append({'role':'user','content':
+            'The previous attempt failed. Repair it rather than repeating it.\n'+
+            json.dumps({'last_proposal':previous.get('proposal'),
+                        'test_failure':previous.get('test_output',previous.get('error',''))[-3500:]})+
+            '\nReturn the complete corrected JSON proposal. Fix test errors too.'})
+    messages.append({'role':'user','content':
+        'Make exactly one minimal behavior fix for the active task. Write a regression that calls the '
+        'actual changed function. Use unittest and a with tempfile.TemporaryDirectory() block inside '
+        'the test. Preserve existing behavior for other inputs. Return JSON only.'})
     body = {'model': args.model, 'messages': [
-        {'role': 'system', 'content': SYSTEM},
-        {'role': 'user', 'content': json.dumps({'objective': task or args.objective,
-          'source_files': sources, 'previous_feedback': feedback[-2:]})}],
-        'temperature': 0.15, 'max_tokens': 4096,
+        *messages],
+        'temperature': 0.25, 'max_tokens': 4096,
         'chat_template_kwargs': {'enable_thinking': False}}
     request = urllib.request.Request(args.endpoint.rstrip('/') + '/chat/completions',
         data=json.dumps(body).encode(), headers={'Content-Type': 'application/json',

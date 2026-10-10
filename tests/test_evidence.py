@@ -74,6 +74,19 @@ class EvidenceTests(unittest.TestCase):
         self.assertNotEqual(fingerprint('nmap -oN result.txt example.test', 'vm'),
                             fingerprint('nmap -oN result.txt example.test', 'container'))
 
+    def test_backfill_resolves_existing_non_null_directory(self):
+        root=Path(self.tmp.name)
+        artifact=root/'runs/job-a/cai-test/result.json'
+        artifact.parent.mkdir(parents=True)
+        artifact.write_text(json.dumps({'conversation':[
+            {'type':'function_call','call_id':'a','arguments':json.dumps(
+                {'command':'echo hello','working_directory':'../other'})},
+            {'type':'function_call_output','call_id':'a','output':'hello'}]}))
+        self.store.backfill(root)
+        rows=self.store.search('job-a')
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]['cwd'],str((artifact.parent/'../other').resolve()))
+
 
 if __name__ == '__main__':
     unittest.main()
