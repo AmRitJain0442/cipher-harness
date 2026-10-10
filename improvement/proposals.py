@@ -39,6 +39,15 @@ def normalize_proposal(raw,sources):
         # Some local models group several valid code lines into one JSON string.
         # Normalize the decoded source without guessing at malformed JSON escapes.
         replacement=[line for item in replacement for line in item.replace('\r\n','\n').replace('\r','\n').split('\n')]
+        # Model snippets may be relative to column zero. Place their root at the
+        # replaced block's indentation while preserving all relative indentation.
+        original_line=next((line for line in lines[first-1:last] if line.strip()),'')
+        replacement_line=next((line for line in replacement if line.strip()),'')
+        original_indent=len(original_line)-len(original_line.lstrip(' '))
+        replacement_indent=len(replacement_line)-len(replacement_line.lstrip(' '))
+        if path.endswith('.py') and replacement_indent<original_indent:
+            padding=' '*(original_indent-replacement_indent)
+            replacement=[padding+line if line.strip() else line for line in replacement]
         if sum(len(line) for line in replacement)>12000: raise ValueError('Replacement exceeds change budget.')
         grouped.setdefault(path,[]).append((first,last,replacement))
     normalized=[]

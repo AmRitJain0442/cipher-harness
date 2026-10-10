@@ -49,6 +49,19 @@ class StructuredProposalTests(unittest.TestCase):
         result=normalize_proposal(self.raw,self.sources)
         self.assertIn('def example():\n    value = 3\n    return value\n',result['edits'][0]['new'])
 
+    def test_relative_indentation_is_anchored_to_replaced_method(self):
+        sources={'control/evidence.py':'class Example:\n    def method(self):\n        return 1\n'}
+        self.raw['edits'][0].update(start_line=2,end_line=3,
+            replacement_lines=['def method(self):','    if True:','        return 2'])
+        result=normalize_proposal(self.raw,sources)
+        self.assertEqual(result['edits'][0]['new'],
+            'class Example:\n    def method(self):\n        if True:\n            return 2\n')
+
+    def test_relative_body_indentation_preserves_nested_blocks(self):
+        self.raw['edits'][0]['replacement_lines']=['if True:','    return 2']
+        result=normalize_proposal(self.raw,self.sources)
+        self.assertIn('def example():\n    if True:\n        return 2\n',result['edits'][0]['new'])
+
     def test_request_enforces_schema_and_preserves_escaped_code(self):
         body=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(self.raw)}}]}).encode()
         from io import BytesIO
