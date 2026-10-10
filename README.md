@@ -95,7 +95,7 @@ Inspect private reports in `.improve/cycle-*.json` and `.improve/summary.json`.
 Create `.improve/STOP` to stop before the next cycle, or stop the supervisor process.
 Remove the marker before starting another run. A lock prevents concurrent runs.
 The supervisor can run as a systemd service to continue after an SSH disconnect.
-`improvement/supervisor.py` repeats three-cycle batches every 15 minutes on the
+`improvement/supervisor.py` repeats three-cycle batches with a 30-second pause on the
 `improve/autonomous` branch. Set `IMPROVE_REPO`, `IMPROVE_MODEL_KEY_FILE`, and
 Git authentication in its private service configuration. `IMPROVE_ENDPOINT`,
 `IMPROVE_MODEL`, `IMPROVE_CYCLES`, and `IMPROVE_BATCH_INTERVAL` are configurable.

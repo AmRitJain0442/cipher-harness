@@ -9,7 +9,7 @@ import time
 
 def main():
     repo = Path(os.environ['IMPROVE_REPO'])
-    interval = int(os.getenv('IMPROVE_BATCH_INTERVAL', '900'))
+    interval = int(os.getenv('IMPROVE_BATCH_INTERVAL', '30'))
     runner = Path(__file__).with_name('runner.py')
     args = [sys.executable,str(runner),'--repo',str(repo),
             '--key-file',os.environ['IMPROVE_MODEL_KEY_FILE'],
