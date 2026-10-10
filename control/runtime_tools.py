@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 
 TOOLS = ('bash', 'python3', 'node', 'git', 'curl', 'wget', 'jq', 'rg',
-         'nmap', 'dig', 'nc', 'openssl', 'nikto', 'sqlmap', 'pipx')
+         'nmap', 'dig', 'nc', 'openssl', 'nikto', 'sqlmap', 'httpx', 'nuclei', 'pipx')
 
 
 def inventory():
