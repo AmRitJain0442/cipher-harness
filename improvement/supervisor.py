@@ -22,7 +22,8 @@ def main():
     while not (repo/'.improve/STOP').exists():
         print('Starting recursive improvement batch.',flush=True)
         result = subprocess.run(args)
-        print(json.dumps({'batch_exit_code':result.returncode,'next_batch_seconds':interval}),flush=True)
+        print(json.dumps({'batch_exit_code':result.returncode,'next_batch_seconds':interval,
+                          'next_batch_utc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime(time.time()+interval))}),flush=True)
         # Sleep in short increments so the owner stop marker remains responsive.
         for _ in range(max(1,interval//5)):
             if (repo/'.improve/STOP').exists():
