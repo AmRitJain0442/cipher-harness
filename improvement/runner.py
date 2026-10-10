@@ -66,7 +66,12 @@ paths; the simplest fix uses (args.get('working_directory') or '.') inside the
 existing path expression. The correct replacement statement is:
 cwd=str((artifact.parent/(args.get('working_directory') or '.')).resolve())
 Keep its existing indentation. Replace just that one statement, not a two-line
-conditional that omits .resolve() when working_directory is non-null.'''
+conditional that omits .resolve() when working_directory is non-null.
+The old exact statement in the current source is:
+cwd=str((artifact.parent/args.get('working_directory','.')).resolve())
+Use that as old (without leading spaces); the source's existing indentation will
+remain before its replacement. Do not use old text from a previously rejected
+candidate: those changes were never applied to the accepted source.'''
 
 
 def command(args, cwd=None, timeout=120, env=None):
@@ -243,6 +248,7 @@ def main():
                     task = BACKFILL_TASK
                 sources = {p: (repo / p).read_text() for p in focus}
                 proposal = ask(args, sources, feedback, key, task)
+                report['proposal'] = proposal
                 if not proposal.get('edits'):
                     report['status'] = 'no_change'
                     write_report(report_path, report)
