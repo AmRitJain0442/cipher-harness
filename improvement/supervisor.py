@@ -19,6 +19,8 @@ def main():
             '--branch','improve/autonomous','--publish']
     if os.getenv('IMPROVE_GITHUB_TOKEN_FILE'):
         args.extend(['--github-token-file',os.environ['IMPROVE_GITHUB_TOKEN_FILE']])
+    if os.getenv('IMPROVE_OBJECTIVE'):
+        args.extend(['--objective',os.environ['IMPROVE_OBJECTIVE']])
     while not (repo/'.improve/STOP').exists():
         print('Starting recursive improvement batch.',flush=True)
         result = subprocess.run(args)
