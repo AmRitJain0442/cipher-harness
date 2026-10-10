@@ -10,6 +10,7 @@ from aiohttp import ClientSession, ClientTimeout, web
 
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'control'))
 from settings import MODEL, UPSTREAM_BASE, secret
+from gemini_advisor import enrich_command_failure
 KEY = secret('HARNESS_API_KEY')
 EMBEDDER = None
 sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'control'))
@@ -140,6 +141,7 @@ async def handler(request):
         data.pop('tool_choice',None)
         data.pop('parallel_tool_calls',None)
     data.pop('store',None)
+    await enrich_command_failure(request.app['session'], data)
     marker=next((re.search(r'\[CIPHER_JOB:([a-f0-9]{24})\]',str(m.get('content','')))
                  for m in data.get('messages',[]) if re.search(r'\[CIPHER_JOB:([a-f0-9]{24})\]',str(m.get('content','')))),None)
     has_terminal=any(t.get('function',{}).get('name')=='terminal' for t in data.get('tools',[]))
@@ -160,6 +162,8 @@ async def handler(request):
 
 
 async def main():
+    import logging
+    logging.basicConfig(level=logging.INFO)
     app = web.Application(client_max_size=8*1024*1024)
     app['embedding_lock'] = asyncio.Lock()
     async with ClientSession(timeout=ClientTimeout(total=600)) as session:

@@ -1,2 +1,4 @@
 -r requirements.txt
 fastembed>=0.4,<1
+google-auth>=2,<3
+requests>=2,<3
