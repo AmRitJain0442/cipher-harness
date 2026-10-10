@@ -34,8 +34,11 @@ def normalize_proposal(raw,sources):
         if type(first) is not int or type(last) is not int or not 1<=first<=last<=len(lines):
             raise ValueError('Invalid source line range for '+path)
         replacement=edit.get('replacement_lines')
-        if not isinstance(replacement,list) or any(not isinstance(line,str) or '\n' in line or '\r' in line for line in replacement):
-            raise ValueError('Each replacement item must be one source line.')
+        if not isinstance(replacement,list) or any(not isinstance(line,str) for line in replacement):
+            raise ValueError('Replacement source must be strings.')
+        # Some local models group several valid code lines into one JSON string.
+        # Normalize the decoded source without guessing at malformed JSON escapes.
+        replacement=[line for item in replacement for line in item.replace('\r\n','\n').replace('\r','\n').split('\n')]
         if sum(len(line) for line in replacement)>12000: raise ValueError('Replacement exceeds change budget.')
         grouped.setdefault(path,[]).append((first,last,replacement))
     normalized=[]

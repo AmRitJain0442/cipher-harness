@@ -44,10 +44,10 @@ class StructuredProposalTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Overlapping'):
             normalize_proposal(self.raw,self.sources)
 
-    def test_multi_line_replacement_item_is_rejected(self):
-        self.raw['edits'][0]['replacement_lines']=['one\ntwo']
-        with self.assertRaisesRegex(ValueError,'one source line'):
-            normalize_proposal(self.raw,self.sources)
+    def test_multi_line_replacement_keeps_source_and_indentation(self):
+        self.raw['edits'][0]['replacement_lines']=['    value = 3\n    return value']
+        result=normalize_proposal(self.raw,self.sources)
+        self.assertIn('def example():\n    value = 3\n    return value\n',result['edits'][0]['new'])
 
     def test_request_enforces_schema_and_preserves_escaped_code(self):
         body=json.dumps({'choices':[{'finish_reason':'stop','message':{'content':json.dumps(self.raw)}}]}).encode()
